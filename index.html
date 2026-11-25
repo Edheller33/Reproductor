@@ -235,7 +235,7 @@ select{min-height:40px;border-radius:10px;border:1px solid var(--linea);backgrou
 
     <!-- BIBLIOTECA -->
     <section class="view" id="v-lib" aria-label="Biblioteca">
-      <div class="drop" id="drop">Arrastra archivos aquí o usa el botón. Se guardan en tu dispositivo para escucharlos sin conexión.</div>
+      <div class="drop" id="drop">Las pistas del catálogo vienen del sitio. Aquí también puedes agregar tu propia música; se guarda solo en este dispositivo.</div>
       <div class="tools">
         <input class="search" id="q" type="search" placeholder="Buscar por título o artista" aria-label="Buscar">
         <button class="chip" id="bFav" aria-pressed="false"><svg class="i" style="width:16px;height:16px"><use href="#i-heart"/></svg>Favoritas</button>
@@ -319,7 +319,7 @@ select{min-height:40px;border-radius:10px;border:1px solid var(--linea);backgrou
           <dt>Pistas guardadas</dt><dd id="stDb">—</dd>
           <dt>Versión</dt><dd>2.0</dd>
         </dl>
-        <div class="row2"><button class="btn" id="bInstall">Instalar app</button><button class="btn" id="bReset">Restablecer ajustes</button></div>
+        <div class="row2"><button class="btn" id="bInstall">Instalar app</button><button class="btn" id="bShare">Compartir enlace</button><button class="btn" id="bReset">Restablecer ajustes</button></div>
       </div>
     </section>
   </main>
@@ -458,7 +458,7 @@ audio.addEventListener('timeupdate',()=>{
   if(n-lastSave>4000){lastSave=n;cfg.pos=audio.currentTime;saveCfg()}
   if(n-lastPos>1000&&'mediaSession' in navigator&&navigator.mediaSession.setPositionState){lastPos=n;try{navigator.mediaSession.setPositionState({duration:d,position:audio.currentTime,playbackRate:audio.playbackRate||1})}catch(_){}}
 });
-audio.addEventListener('loadedmetadata',()=>{$('tDur').textContent=fmt(audio.duration);const t=S.tracks[S.cur];if(t&&!t.dur){t.dur=audio.duration;DB.put(rec(t)).catch(()=>{});renderList()}});
+audio.addEventListener('loadedmetadata',()=>{$('tDur').textContent=fmt(audio.duration);const t=S.tracks[S.cur];if(t&&!t.dur){t.dur=audio.duration;if(!t.remote)DB.put(rec(t)).catch(()=>{});renderList()}});
 
 /* Barra de progreso (táctil + teclado) */
 let drag=false;
@@ -561,7 +561,7 @@ async function addFiles(files){
   if(skip)toast(skip+(skip>1?' pistas repetidas omitidas':' pista repetida omitida'));
 }
 function removeTrack(id){
-  const i=S.tracks.findIndex(t=>t.id===id);if(i<0)return;
+  const i=S.tracks.findIndex(t=>t.id===id);if(i<0||S.tracks[i].remote)return;
   const wasCur=i===S.cur;if(wasCur)pause();
   URL.revokeObjectURL(S.tracks[i].url);S.tracks.splice(i,1);DB.del(id).catch(()=>{});
   if(wasCur){if(S.tracks.length){load(Math.min(i,S.tracks.length-1),false)}else{S.cur=-1;audio.removeAttribute('src');audio.load();$('fill').style.width='0%';$('knob').style.left='0%';$('tNow').textContent='0:00';$('tDur').textContent='0:00';setMeta()}}
@@ -577,15 +577,15 @@ function renderList(){
     const a=i===S.cur;
     return '<div class="tr'+(a?' act':'')+'" data-i="'+i+'" role="button" tabindex="0" aria-label="Reproducir '+esc(t.name)+'">'+
       '<div class="n">'+(a?'<div class="eq-bars'+(S.playing?'':' pausa')+'"><i></i><i></i><i></i></div>':i+1)+'</div>'+
-      '<div class="inf"><div class="ti">'+esc(t.name)+'</div><div class="ar">'+esc(t.artist)+'</div></div>'+
+      '<div class="inf"><div class="ti">'+esc(t.name)+'</div><div class="ar">'+esc(t.artist)+(t.remote?' (catálogo)':'')+'</div></div>'+
       '<span class="du">'+fmt(t.dur)+'</span>'+
       '<button class="ib fav'+(t.fav?' on':'')+'" data-fav="'+t.id+'" aria-label="Favorita" aria-pressed="'+!!t.fav+'"><svg class="i'+(t.fav?' f':'')+'"><use href="#i-heart"/></svg></button>'+
-      '<button class="ib del" data-del="'+t.id+'" aria-label="Eliminar"><svg class="i"><use href="#i-trash"/></svg></button></div>';
+      (t.remote?'':'<button class="ib del" data-del="'+t.id+'" aria-label="Eliminar"><svg class="i"><use href="#i-trash"/></svg></button>')+'</div>';
   }).join('');
 }
 $('list').addEventListener('click',e=>{
   const fav=e.target.closest('[data-fav]'),del=e.target.closest('[data-del]'),row=e.target.closest('.tr');
-  if(fav){const t=S.tracks.find(x=>x.id===fav.dataset.fav);if(t){t.fav=!t.fav;DB.put(rec(t)).catch(()=>{});renderList()}return}
+  if(fav){const t=S.tracks.find(x=>x.id===fav.dataset.fav);if(t){t.fav=!t.fav;if(t.remote){const f=new Set(LS.get('cfavs',[]));t.fav?f.add(t.id):f.delete(t.id);LS.set('cfavs',[...f])}else DB.put(rec(t)).catch(()=>{});renderList()}return}
   if(del){if(confirm('¿Eliminar esta pista de la biblioteca?'))removeTrack(del.dataset.del);return}
   if(row){const i=+row.dataset.i;if(i===S.cur)toggle();else load(i)}
 });
@@ -595,15 +595,35 @@ $('bFav').onclick=()=>{S.onlyFav=!S.onlyFav;$('bFav').classList.toggle('on',S.on
 $('bAdd').onclick=()=>$('file').click();
 $('file').onchange=e=>{if(e.target.files.length)addFiles(e.target.files)};
 $('bClear').onclick=async()=>{
-  if(!S.tracks.length||!confirm('¿Vaciar toda la biblioteca? Se borrarán las pistas guardadas en este dispositivo.'))return;
-  pause();S.tracks.forEach(t=>URL.revokeObjectURL(t.url));S.tracks=[];S.cur=-1;await DB.clear().catch(()=>{});
-  audio.removeAttribute('src');audio.load();$('fill').style.width='0%';$('knob').style.left='0%';$('tNow').textContent='0:00';$('tDur').textContent='0:00';
-  setMeta();renderList();updStatus();toast('Biblioteca vaciada');
+  const own=S.tracks.filter(t=>!t.remote);
+  if(!own.length||!confirm('¿Vaciar tu música local? El catálogo del sitio no se borra.'))return;
+  const curId=S.tracks[S.cur]&&S.tracks[S.cur].id,curRemote=!!(S.tracks[S.cur]&&S.tracks[S.cur].remote);
+  if(!curRemote)pause();
+  own.forEach(t=>URL.revokeObjectURL(t.url));
+  S.tracks=S.tracks.filter(t=>t.remote);await DB.clear().catch(()=>{});
+  S.cur=curRemote?S.tracks.findIndex(t=>t.id===curId):-1;
+  if(S.cur<0){audio.removeAttribute('src');audio.load();$('fill').style.width='0%';$('knob').style.left='0%';$('tNow').textContent='0:00';$('tDur').textContent='0:00'}
+  setMeta();renderList();updStatus();toast('Música local vaciada');
 };
 const dz=$('drop');
 ['dragenter','dragover'].forEach(ev=>document.addEventListener(ev,e=>{e.preventDefault();dz.classList.add('over')}));
 ['dragleave','drop'].forEach(ev=>document.addEventListener(ev,e=>{e.preventDefault();dz.classList.remove('over')}));
 document.addEventListener('drop',e=>{if(e.dataTransfer&&e.dataTransfer.files.length){addFiles(e.dataTransfer.files);go('lib')}});
+
+/* ═══ CATÁLOGO DEL SITIO (carpeta /musica del repositorio) ═══
+   Opción A: playlist.json  {"canciones":[{"archivo":"musica/tema.mp3","titulo":"…","artista":"…"}]}
+   Opción B (automática): lista los audios de la carpeta /musica con la API pública de GitHub. */
+async function loadCatalog(){
+  const favs=LS.get('cfavs',[]);
+  const mk=(file,title,artist,dur)=>({id:'c:'+file,name:title,artist:artist||'EAMR',dur:dur||0,size:0,fav:favs.includes('c:'+file),remote:true,url:encodeURI(file),added:0});
+  const fromNames=ns=>ns.map(n=>{const q=parseName(n);return mk('musica/'+n,q.name,q.artist==='Audio'?'EAMR':q.artist)});
+  try{const r=await fetch('playlist.json',{cache:'no-cache'});if(r.ok){const j=await r.json();const a=Array.isArray(j)?j:(j.canciones||[]);if(a.length)return a.filter(x=>x&&x.archivo).map(x=>mk(x.archivo,x.titulo||parseName(x.archivo.split('/').pop()).name,x.artista,x.duracion))}}catch(_){}
+  const m=location.hostname.match(/^([^.]+)\.github\.io$/),repo=location.pathname.split('/')[1],key='catalog_'+repo;
+  if(!m||!repo)return [];
+  try{const r=await fetch('https://api.github.com/repos/'+m[1]+'/'+repo+'/contents/musica',{headers:{Accept:'application/vnd.github+json'}});
+    if(r.ok){const names=(await r.json()).filter(f=>f.type==='file'&&EXT.test(f.name)).map(f=>f.name).sort((a,b)=>a.localeCompare(b,'es'));LS.set(key,names);return fromNames(names)}}catch(_){}
+  return fromNames(LS.get(key,[]));
+}
 
 /* ═══ ESTUDIO ═══ */
 const NN=['Do','Do♯','Re','Re♯','Mi','Fa','Fa♯','Sol','Sol♯','La','La♯','Si'];
@@ -716,9 +736,10 @@ function paintEq(){[0,1,2].forEach(i=>{$('eq'+i).value=cfg.eq[i];$('eqo'+i).text
 $('eqPre').onclick=e=>{const b=e.target.closest('[data-p]');if(!b)return;EQP[b.dataset.p].forEach((v,i)=>AE.setEq(i,v));paintEq();saveCfg()};
 function sw(id,key,cb){const el=$(id);el.setAttribute('aria-checked',!!cfg[key]);el.onclick=()=>{cfg[key]=!cfg[key];el.setAttribute('aria-checked',cfg[key]);saveCfg();cb&&cb(cfg[key])}}
 sw('swWake','wake',v=>{v?(S.playing&&acquireWake()):releaseWake()});sw('swCalm','calm');sw('swVib','vib');
+$('bShare').onclick=async()=>{const u=location.href.split('#')[0];try{if(navigator.share)await navigator.share({title:'Sonic Player',text:'Escucha nuestra música',url:u});else{await navigator.clipboard.writeText(u);toast('Enlace copiado')}}catch(_){}};
 $('bReset').onclick=()=>{if(!confirm('¿Restablecer todos los ajustes? Tu biblioteca no se borra.'))return;localStorage.removeItem('sp2_cfg');location.reload()};
 async function updStatus(){
-  $('stDb').textContent=DB.db?S.tracks.length+' en este dispositivo':'solo en esta sesión';
+  const own=S.tracks.filter(t=>!t.remote).length,cat=S.tracks.length-own;$('stDb').textContent=(cat?cat+' del catálogo, ':'')+(DB.db?own+' en este dispositivo':own+' solo en esta sesión');
   try{if(navigator.storage&&navigator.storage.estimate){const e=await navigator.storage.estimate();$('stSto').textContent=(e.usage/1048576).toFixed(0)+' MB de '+(e.quota/1073741824).toFixed(1)+' GB'}else $('stSto').textContent='no disponible'}catch(_){$('stSto').textContent='no disponible'}
 }
 
@@ -768,11 +789,12 @@ document.querySelector('.tabs').onclick=e=>{const b=e.target.closest('button');i
 async function init(){
   paintShuf();paintRep();paintSpeed();paintEq();$('bStyle').textContent=STYLES[cfg.style];$('vol').value=cfg.vol;
   buildPads();buildSeq();buildGame();sizeWave();startLoop();
+  const cat=await loadCatalog();S.tracks=cat.slice();
   const ok=await DB.open();
   if(ok){
     try{
       const rows=(await DB.all())||[];rows.sort((a,b)=>(a.added||0)-(b.added||0));
-      S.tracks=rows.map(r=>({id:r.id,name:r.name,artist:r.artist,dur:r.dur,size:r.size,fav:r.fav,blob:r.blob,added:r.added,url:URL.createObjectURL(r.blob)}));
+      S.tracks=cat.concat(rows.map(r=>({id:r.id,name:r.name,artist:r.artist,dur:r.dur,size:r.size,fav:r.fav,blob:r.blob,added:r.added,url:URL.createObjectURL(r.blob)})));
     }catch(e){console.warn('No se pudo leer la biblioteca',e)}
   }
   renderList();updStatus();
